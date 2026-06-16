@@ -26,7 +26,7 @@ public struct OAuthManager {
         self.init(
             connectedApp: connectedApp,
             hostname: hostname,
-            authenticator: UserAgentFlow(),
+            authenticator: AuthorizationCodePKCEFlow(),
             refresher: RefreshTokenFlow()
         )
     }

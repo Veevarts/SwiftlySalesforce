@@ -9,6 +9,11 @@ import Foundation
 import Combine
 
 public struct RefreshTokenFlow {
+    private let session: URLSession
+
+    public init(session: URLSession = .shared) {
+        self.session = session
+    }
 }
 
 extension RefreshTokenFlow: Refresher {
@@ -42,7 +47,7 @@ extension RefreshTokenFlow: Refresher {
         req.httpBody = body
     
         // Publisher for request
-        return URLSession.shared.dataTaskPublisher(for: req)
+        return session.dataTaskPublisher(for: req)
             .tryMap { (data, response) -> Data in
                 guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                     // Try to decode error information from data
@@ -65,6 +70,11 @@ public enum RefreshTokenFlowError: LocalizedError {
     case invalidEndpointURL
     case invalidRequest(message: String?)
     case endpointFailure(code: String, description: String?, response: URLResponse)
+
+    public var isInvalidGrant: Bool {
+        guard case let .endpointFailure(code, _, _) = self else { return false }
+        return code == "invalid_grant"
+    }
 }
 
 fileprivate struct RefreshTokenFlowResult {
@@ -73,11 +83,12 @@ fileprivate struct RefreshTokenFlowResult {
     let instanceURL: URL
     let identityURL: URL
     let issuedAt: UInt?
+    let refreshToken: String?
     let communityURL: URL?
     let communityID: String?
     
     func refreshing(credential: Credential) -> Credential {
-        return Credential(accessToken: accessToken, instanceURL: instanceURL, identityURL: identityURL, refreshToken: credential.refreshToken, issuedAt: issuedAt, idToken: credential.idToken, communityURL: communityURL, communityID: communityID)
+        return Credential(accessToken: accessToken, instanceURL: instanceURL, identityURL: identityURL, refreshToken: refreshToken ?? credential.refreshToken, issuedAt: issuedAt, idToken: credential.idToken, communityURL: communityURL, communityID: communityID)
     }
 }
 
@@ -88,6 +99,7 @@ extension RefreshTokenFlowResult: Decodable {
         case instanceURL = "instance_url"
         case identityURL = "id"
         case issuedAt = "issued_at"
+        case refreshToken = "refresh_token"
         case communityURL = "sfdc_community_url"
         case communityID = "sfdc_community_id"
     }
@@ -107,6 +119,7 @@ extension RefreshTokenFlowResult: Decodable {
             }
             return UInt(s)
         }()
+        self.refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
         self.communityURL = try container.decodeIfPresent(URL.self, forKey: .communityURL)
         self.communityID = try container.decodeIfPresent(String.self, forKey: .communityID)
     }

@@ -98,8 +98,11 @@ extension Salesforce {
             return oldCred
         }
         .flatMap { oldCred in
-            // Attempt to refresh invalid credential
-            self.oAuthManager.refresh(credential: oldCred)
+            // Attempt to refresh invalid credential. Concurrent callers for the
+            // same credential share one in-flight refresh.
+            self.refreshCoordinator.refresh(credential: oldCred) {
+                self.oAuthManager.refresh(credential: oldCred)
+            }
         }
         .tryCatch { (error) -> AnyPublisher<Credential, Error> in
             // Attempt to refresh credential failed...
@@ -111,8 +114,8 @@ extension Salesforce {
             return self.oAuthManager.authenticate()
         }
         .map { (newCred) -> Credential in
-            // Store new credential securely and publish it
-            try? self.credentialStore.store(newCred)
+            // Store the complete refreshed credential securely and publish it.
+            try? self.credentialStore.replace(with: newCred)
             return newCred
         }
         .eraseToAnyPublisher()

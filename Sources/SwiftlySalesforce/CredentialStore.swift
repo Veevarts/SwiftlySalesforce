@@ -56,6 +56,10 @@ public struct CredentialStore {
             defaults.set(userData, forKey: lastStoredUserKey)
         }
     }
+
+    public func replace(with credential: Credential) throws {
+        try store(credential)
+    }
     
     public func clear(for user: User) throws {
         defaults.removeObject(forKey: lastStoredUserKey)
