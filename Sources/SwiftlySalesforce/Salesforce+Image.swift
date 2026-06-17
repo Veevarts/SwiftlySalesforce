@@ -6,8 +6,10 @@
 //  Copyright (c) 2019. All rights reserved.
 
 import Foundation
-import UIKit
 import Combine
+
+#if canImport(UIKit)
+import UIKit
 
 public extension Salesforce {
     
@@ -30,3 +32,4 @@ public extension Salesforce {
         .eraseToAnyPublisher()
     }
 }
+#endif

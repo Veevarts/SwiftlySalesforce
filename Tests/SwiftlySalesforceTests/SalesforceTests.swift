@@ -3,6 +3,11 @@ import Combine
 @testable import SwiftlySalesforce
 
 class SalesforceTests: XCTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try XCTSkipIf(ProcessInfo.processInfo.environment["RUN_SALESFORCE_LIVE_TESTS"] != "1", "Requires live Salesforce org and interactive OAuth")
+    }
+
     
     var subscriptions = Set<AnyCancellable>()
     

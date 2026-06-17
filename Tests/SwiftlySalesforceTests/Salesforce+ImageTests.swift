@@ -1,5 +1,7 @@
+#if canImport(UIKit)
 import XCTest
 import Combine
+import UIKit
 @testable import SwiftlySalesforce
 
 class Salesforce_ImageTests: XCTestCase {
@@ -42,3 +44,4 @@ class Salesforce_ImageTests: XCTestCase {
         waitForExpectations(timeout: 60, handler: nil)
     }
 }
+#endif

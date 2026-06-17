@@ -27,6 +27,7 @@ open class Salesforce {
     
     internal let oAuthManager: OAuthManager
     internal let credentialStore: CredentialStore
+    internal let refreshCoordinator = SalesforceRefreshCoordinator()
     
     // MARK: - Request configuration -
     
