@@ -98,10 +98,23 @@ extension Salesforce {
             return oldCred
         }
         .flatMap { oldCred in
-            // Attempt to refresh invalid credential. Concurrent callers for the
-            // same credential share one in-flight refresh.
-            self.refreshCoordinator.refresh(credential: oldCred) {
+            // Attempt to refresh the invalid credential. Concurrent callers for the
+            // same user share one in-flight refresh; a staggered caller whose token
+            // was already rotated out reuses the stored credential instead of
+            // refreshing a superseded (single-use) refresh token.
+            self.refreshCoordinator.refresh(
+                credential: oldCred,
+                latestCredential: { self.credential }
+            ) {
                 self.oAuthManager.refresh(credential: oldCred)
+                .map { (newCred) -> Credential in
+                    // Persist the rotated credential *before* the coordinator frees
+                    // its entry, so a later straggler re-reads the new token, not
+                    // the dead one.
+                    try? self.credentialStore.replace(with: newCred)
+                    return newCred
+                }
+                .eraseToAnyPublisher()
             }
         }
         .tryCatch { (error) -> AnyPublisher<Credential, Error> in
@@ -110,13 +123,13 @@ extension Salesforce {
                 // Caller doesn't want to authenticate, so just re-throw error
                 throw error
             }
-            // ...so authenticate
+            // ...so authenticate, then store the freshly issued credential.
             return self.oAuthManager.authenticate()
-        }
-        .map { (newCred) -> Credential in
-            // Store the complete refreshed credential securely and publish it.
-            try? self.credentialStore.replace(with: newCred)
-            return newCred
+            .map { (newCred) -> Credential in
+                try? self.credentialStore.replace(with: newCred)
+                return newCred
+            }
+            .eraseToAnyPublisher()
         }
         .eraseToAnyPublisher()
     }
