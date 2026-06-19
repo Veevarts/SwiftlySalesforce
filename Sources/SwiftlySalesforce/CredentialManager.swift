@@ -7,10 +7,25 @@ Copyright (c) 2021. All rights reserved.
 import Foundation
 import Combine
 
+// MARK: - AuthMethod enum (internal — no public API change)
+
+/// Selects the interactive-login flow used by `CredentialManager.grantCredential`.
+///
+/// - `pkce`: OAuth 2.0 Authorization Code + PKCE (default; Salesforce-recommended for mobile).
+/// - `userAgent`: Legacy OAuth 2.0 User-Agent (implicit) flow via `UserAgentFlow`.
+enum AuthMethod: Equatable {
+    case pkce
+    case userAgent
+}
+
+// MARK: - CredentialManager
+
 struct CredentialManager {
     var consumerKey: String
     var callbackURL: URL
     var defaultHost: String = "login.salesforce.com"
+    /// The interactive-login mechanism. Defaults to `.pkce`.
+    var authenticator: AuthMethod = .pkce
 }
 
 extension CredentialManager {
@@ -51,9 +66,20 @@ extension CredentialManager {
                     .flatMap { refreshToken in
                         RefreshTokenFlow(refreshToken: refreshToken, consumerKey: consumerKey, host: host).publisher
                     }
-                    .tryCatch { error -> AnyPublisher<Credential, Error> in
+                    .tryCatch { [authenticator] error -> AnyPublisher<Credential, Error> in
                         guard allowsLogin else { throw error }
-                        return UserAgentFlow(host: host, consumerKey: consumerKey, callbackURL: callbackURL).publisher
+                        switch authenticator {
+                        case .userAgent:
+                            return UserAgentFlow(host: host, consumerKey: consumerKey, callbackURL: callbackURL).publisher
+                        case .pkce:
+                            // Instantiate flow locally; capture it strongly so it outlives the
+                            // ASWebAuthenticationSession callback (class-lifetime-in-struct resolution).
+                            // `.handleEvents` pins `flow` until the publisher completes/errors.
+                            let flow = AuthorizationCodePKCEFlow(session: URLSession(configuration: .ephemeral))
+                            return flow.publisher(host: host, consumerKey: consumerKey, callbackURL: callbackURL)
+                                .handleEvents(receiveCompletion: { _ in withExtendedLifetime(flow) {} })
+                                .eraseToAnyPublisher()
+                        }
                     }
                     .validate { newCredential in
                         try store.store(newCredential)

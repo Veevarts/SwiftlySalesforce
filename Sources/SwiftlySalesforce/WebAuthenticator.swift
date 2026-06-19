@@ -47,7 +47,18 @@ class WebAuthenticator: NSObject {
 
 extension WebAuthenticator: ASWebAuthenticationPresentationContextProviding {
     public func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        return UIApplication.shared.windows.first { $0.isKeyWindow } ?? ASPresentationAnchor()
+        // Use connectedScenes instead of the deprecated UIApplication.shared.windows (deprecated iOS 15).
+        // `UIWindowScene.keyWindow` is iOS 15+; for iOS 14 we fall back to iterating scene windows.
+        if let windowScene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first {
+            if #available(iOS 15, *) {
+                return windowScene.keyWindow ?? ASPresentationAnchor()
+            } else {
+                return windowScene.windows.first(where: { $0.isKeyWindow }) ?? ASPresentationAnchor()
+            }
+        }
+        return ASPresentationAnchor()
     }
 }
 
