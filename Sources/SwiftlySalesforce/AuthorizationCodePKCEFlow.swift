@@ -139,6 +139,10 @@ public extension AuthorizationCodePKCEFlow {
 internal extension AuthorizationCodePKCEFlow {
     func authorizationURL(connectedApp: ConnectedApp, hostname: String) throws -> (url: URL, verifier: String) {
         let verifier = try verifierGenerator()
+        let challenge = AuthorizationCodePKCEFlow.codeChallenge(for: verifier)
+
+        // [8.2.3-alpha] PKCE diagnostic — authorize side. Remove before a stable release.
+        print("[SwiftlySalesforce 8.2.3-alpha PKCE] authorize | verifier=\(verifier) | code_challenge=\(challenge) | SHA256(verifier)=\(challenge) | match=\(challenge == AuthorizationCodePKCEFlow.codeChallenge(for: verifier))")
 
         let parameters = [
             "response_type": "code",
@@ -146,7 +150,7 @@ internal extension AuthorizationCodePKCEFlow {
             "redirect_uri": connectedApp.callbackURL.absoluteString,
             "prompt": "login consent",
             "display": "touch",
-            "code_challenge": AuthorizationCodePKCEFlow.codeChallenge(for: verifier),
+            "code_challenge": challenge,
             "code_challenge_method": "S256"
         ]
 
@@ -182,9 +186,22 @@ internal extension AuthorizationCodePKCEFlow {
             "code": code,
             "code_verifier": codeVerifier
         ]
-        guard let body = parameters.asPercentEncodedString()?.data(using: .utf8) else {
+        guard let encodedBody = parameters.asPercentEncodedString(), let body = encodedBody.data(using: .utf8) else {
             return Fail(error: AuthorizationCodePKCEFlowError.invalidRequest).eraseToAnyPublisher()
         }
+
+        // [8.2.3-alpha] PKCE diagnostic — exchange side. Recomputes SHA256 of the verifier
+        // being sent and prints the exact wire body so we can compare against the
+        // code_challenge issued at authorize. If recomputed == issued challenge but
+        // Salesforce still returns 400 invalid_grant, the cause is server-side, not the SDK.
+        // Remove before a stable release.
+        let recomputedChallenge = AuthorizationCodePKCEFlow.codeChallenge(for: codeVerifier)
+        let wireVerifier = encodedBody
+            .split(separator: "&")
+            .first(where: { $0.hasPrefix("code_verifier=") })
+            .map { String($0.dropFirst("code_verifier=".count)) } ?? "<none>"
+        print("[SwiftlySalesforce 8.2.3-alpha PKCE] exchange | code_verifier=\(codeVerifier) | SHA256(verifier)=\(recomputedChallenge) | verifier_on_wire=\(wireVerifier) | wire_intact=\(wireVerifier == codeVerifier)")
+        print("[SwiftlySalesforce 8.2.3-alpha PKCE] exchange | body=\(encodedBody)")
 
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 60)
         request.httpMethod = HTTPMethod.post.rawValue
@@ -193,6 +210,10 @@ internal extension AuthorizationCodePKCEFlow {
         return session.dataTaskPublisher(for: request)
             .tryMap { data, response -> Data in
                 guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    // [8.2.3-alpha] PKCE diagnostic — print Salesforce's raw token-endpoint
+                    // error body verbatim. Remove before a stable release.
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                    print("[SwiftlySalesforce 8.2.3-alpha PKCE] token endpoint status=\(status) body=\(String(data: data, encoding: .utf8) ?? "<non-utf8>")")
                     if let err = try? JSONDecoder().decode(AuthorizationCodePKCEFlowErrorResult.self, from: data) {
                         throw OAuthManagerError.endpointFailure(code: err.error, description: err.error_description, response: response)
                     }
