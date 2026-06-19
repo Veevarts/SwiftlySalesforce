@@ -1,5 +1,18 @@
 # Change Log
 
+> Releases 8.2.x are from the [Veevarts fork](https://github.com/Veevarts/SwiftlySalesforce).
+
+## Version 8.2.3 (Jun. 19, 2026)
+- Fixed an intermittent `400 invalid_grant` during PKCE login. The `code_verifier` was held in shared mutable state, so two overlapping authorization attempts could overwrite each other's verifier and send one that no longer matched the issued `code_challenge`. The verifier is now bound to its session, and access to the active-authentication state is serialized with a lock.
+
+## Version 8.2.2 (Jun. 19, 2026)
+- Fixed an intermittent `invalid_grant` race under refresh-token rotation (RTR). Concurrent requests sharing one `Salesforce` instance could launch a second refresh of an already-rotated (single-use) refresh token. Refreshes are now coalesced per user, and a staggered straggler reuses the freshly persisted credential instead of refreshing a dead token.
+
+## Version 8.2.1 (Jun. 16, 2026)
+- Added the OAuth 2.0 authorization-code flow with PKCE (S256) as an `Authenticator`.
+- Added refresh-token rotation (RTR) support.
+- Added single-flight refresh that coalesces concurrent token refreshes for the same user.
+
 ## Version 8.0.2 (Feb. 16, 2021)
 - Updated default Salesforce API version to 49.0 (Summer '20).
 - Minor updates to README file.
