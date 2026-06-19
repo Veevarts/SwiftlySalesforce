@@ -28,8 +28,20 @@ public struct SalesforceError: Error, Decodable, Equatable {
 }
 
 extension SalesforceError: LocalizedError {
-        
+
     public var errorDescription: String? {
         return NSLocalizedString(message, comment: code)
+    }
+}
+
+public extension SalesforceError {
+
+    /// Returns `true` when this error represents an OAuth `invalid_grant` response —
+    /// meaning the refresh token has expired or been invalidated (e.g., rotation-enabled
+    /// org invalidated it). Callers can detect this condition without string-parsing.
+    ///
+    /// Satisfied by: REQ-ROT-03
+    var isInvalidGrant: Bool {
+        return code == "invalid_grant"
     }
 }
