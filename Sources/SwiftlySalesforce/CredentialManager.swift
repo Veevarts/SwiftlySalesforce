@@ -53,47 +53,84 @@ extension CredentialManager {
     }
         
     func grantCredential(replacing credential: Credential? = nil, allowsLogin: Bool = true) -> AnyPublisher<Credential, Error> {
-        return CredentialManager.queue.sync {
-            let token = credential?.refreshToken ?? ""
+
+        // MARK: Refresh path — delegate to SalesforceRefreshCoordinator (Slice 3)
+        //
+        // When `credential` is present and has a refreshToken, the coordinator handles
+        // single-flight dedup using a composite key (identityURL|refreshToken).
+        // This replaces the `pendingGranters` dedup for the refresh-token path.
+        if let credential = credential, credential.refreshToken != nil {
+            let host = resolvedHost(for: credential)
+            return CredentialManager.refreshCoordinator
+                .refresh(credential: credential) {
+                    RefreshTokenFlow(
+                        refreshToken: credential.refreshToken!,
+                        consumerKey: consumerKey,
+                        host: host
+                    ).publisher
+                }
+                .tryCatch { [authenticator] error -> AnyPublisher<Credential, Error> in
+                    guard allowsLogin else { throw error }
+                    switch authenticator {
+                    case .userAgent:
+                        return UserAgentFlow(host: host, consumerKey: consumerKey, callbackURL: callbackURL).publisher
+                    case .pkce:
+                        let flow = AuthorizationCodePKCEFlow(session: URLSession(configuration: .ephemeral))
+                        return flow.publisher(host: host, consumerKey: consumerKey, callbackURL: callbackURL)
+                            .handleEvents(receiveCompletion: { _ in withExtendedLifetime(flow) {} })
+                            .eraseToAnyPublisher()
+                    }
+                }
+                .validate { [self] newCredential in
+                    try store.store(newCredential)
+                    defaults?.user = newCredential.user
+                }
+                .eraseToAnyPublisher()
+        }
+
+        // MARK: Fresh-login path — use pendingGranters for concurrent login dedup
+        //
+        // When there is no credential (or no refreshToken), this is a fresh interactive login.
+        // `pendingGranters` deduplicates concurrent fresh-login calls with the empty-string key.
+        let loginPublisher: AnyPublisher<Credential, Error> = CredentialManager.queue.sync { () -> AnyPublisher<Credential, Error> in
+            let token = ""
             if let pub = CredentialManager.pendingGranters[token] {
                 return pub.eraseToAnyPublisher()
             }
-            else {
-                let host = resolvedHost(for: credential)
-                let pub = AnyPublisher<String?, Error>
-                    .just(credential?.refreshToken)
-                    .unwrap(orThrow: SalesforceError.userAuthenticationRequired)
-                    .flatMap { refreshToken in
-                        RefreshTokenFlow(refreshToken: refreshToken, consumerKey: consumerKey, host: host).publisher
-                    }
-                    .tryCatch { [authenticator] error -> AnyPublisher<Credential, Error> in
-                        guard allowsLogin else { throw error }
-                        switch authenticator {
-                        case .userAgent:
-                            return UserAgentFlow(host: host, consumerKey: consumerKey, callbackURL: callbackURL).publisher
-                        case .pkce:
-                            // Instantiate flow locally; capture it strongly so it outlives the
-                            // ASWebAuthenticationSession callback (class-lifetime-in-struct resolution).
-                            // `.handleEvents` pins `flow` until the publisher completes/errors.
-                            let flow = AuthorizationCodePKCEFlow(session: URLSession(configuration: .ephemeral))
-                            return flow.publisher(host: host, consumerKey: consumerKey, callbackURL: callbackURL)
-                                .handleEvents(receiveCompletion: { _ in withExtendedLifetime(flow) {} })
-                                .eraseToAnyPublisher()
-                        }
-                    }
-                    .validate { newCredential in
+            let host = resolvedHost(for: credential)
+            // Fresh interactive login. `.tryCatchUserAuthenticationRequiredError` is not
+            // available here without a preceding publisher, so we build the login publisher
+            // directly and guard `allowsLogin` inline.
+            let pub: AnyPublisher<Credential, Error>
+            if allowsLogin {
+                let loginFlow: AnyPublisher<Credential, Error>
+                switch authenticator {
+                case .userAgent:
+                    loginFlow = UserAgentFlow(host: host, consumerKey: consumerKey, callbackURL: callbackURL).publisher
+                case .pkce:
+                    let flow = AuthorizationCodePKCEFlow(session: URLSession(configuration: .ephemeral))
+                    loginFlow = flow.publisher(host: host, consumerKey: consumerKey, callbackURL: callbackURL)
+                        .handleEvents(receiveCompletion: { _ in withExtendedLifetime(flow) {} })
+                        .eraseToAnyPublisher()
+                }
+                pub = loginFlow
+                    .validate { [self] newCredential in
                         try store.store(newCredential)
                         defaults?.user = newCredential.user
                     }
-                    .onCompletion { _ in
-                        CredentialManager.pendingGranters.removeValue(forKey: token)
-                    }
+                    .onCompletion { _ in CredentialManager.pendingGranters.removeValue(forKey: token) }
                     .share()
                     .eraseToAnyPublisher()
-                CredentialManager.pendingGranters[token] = pub
-                return pub
+            } else {
+                pub = Fail<Credential, Error>(error: SalesforceError.userAuthenticationRequired)
+                    .onCompletion { _ in CredentialManager.pendingGranters.removeValue(forKey: token) }
+                    .share()
+                    .eraseToAnyPublisher()
             }
+            CredentialManager.pendingGranters[token] = pub
+            return pub
         }
+        return loginPublisher
     }
 
     func revokeCredential(_ credential: Credential) -> AnyPublisher<Void, Error> {
@@ -121,10 +158,15 @@ extension CredentialManager {
 }
 
 private extension CredentialManager {
-    
+
     static var queue = DispatchQueue(label: "\(#fileID).\(UUID().uuidString)")
+    /// Deduplicates concurrent fresh-login requests (key = ""; only one interactive
+    /// login flow is allowed at a time). Refresh-path dedup is handled by `refreshCoordinator`.
     static var pendingGranters: [String : AnyPublisher<Credential, Error>] = [:]
     static var pendingRevokers: [String : AnyPublisher<Void, Error>] = [:]
+    /// Deduplicates concurrent refresh-token network calls. Replaces the `pendingGranters`
+    /// dedup for the refresh path (Slice 3 — SalesforceRefreshCoordinator).
+    static var refreshCoordinator = SalesforceRefreshCoordinator()
 
     var store: CredentialStore {
         CredentialStore(consumerKey: consumerKey)
