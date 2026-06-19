@@ -34,6 +34,13 @@ public struct OAuthManager {
     public func authenticate() -> AnyPublisher<Credential, Error> {
         return authenticator.publisher(connectedApp: connectedApp, hostname: hostname)
     }
+
+    /// Stops any in-progress user authentication. Call this before switching the
+    /// OAuth hostname (e.g. when the user changes their My Domain mid-login) so the
+    /// next `authenticate()` starts a fresh PKCE transaction against the new host.
+    public func cancelAuthentication() {
+        authenticator.cancel()
+    }
     
     public func refresh(credential: Credential) -> AnyPublisher<Credential, Error> {
         return refresher.publisher(credential: credential, connectedApp: connectedApp, hostname: hostname)
@@ -46,6 +53,13 @@ public struct OAuthManager {
 
 public protocol Authenticator {
     func publisher(connectedApp: ConnectedApp, hostname: String) -> AnyPublisher<Credential, Error>
+    /// Stops an in-progress authentication so a new one can start cleanly.
+    /// Defaults to a no-op for authenticators that don't hold cancellable state.
+    func cancel()
+}
+
+public extension Authenticator {
+    func cancel() {}
 }
 
 public protocol Refresher {
