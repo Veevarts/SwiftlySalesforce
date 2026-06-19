@@ -87,6 +87,42 @@ final class AuthorizationCodePKCEFlowTests: XCTestCase {
         XCTAssertEqual(challenge2, AuthorizationCodePKCEFlow.codeChallenge(for: verifier2))
     }
 
+    func testCancelClearsInProgressGuardSoNextAuthenticationStartsFresh() throws {
+        // Simulate an in-progress authentication by occupying the shared guard,
+        // exactly as publisher() does for the first authorize.
+        let stale = PassthroughSubject<Credential, Error>()
+        AuthorizationCodePKCEFlow.activeSubjectLock.lock()
+        AuthorizationCodePKCEFlow.activeSubject = (stale, Util.connectedApp.consumerKey)
+        AuthorizationCodePKCEFlow.activeSubjectLock.unlock()
+
+        let cancelled = expectation(description: "in-flight publisher fails with authenticationCancelled")
+        stale
+            .sink(receiveCompletion: { completion in
+                guard case let .failure(error) = completion,
+                      case AuthorizationCodePKCEFlowError.authenticationCancelled = error else {
+                    return XCTFail("Expected authenticationCancelled, got \(completion)")
+                }
+                cancelled.fulfill()
+            }, receiveValue: { _ in XCTFail("Should not emit a credential") })
+            .store(in: &subscriptions)
+
+        AuthorizationCodePKCEFlow.cancelActiveAuthentication()
+
+        waitForExpectations(timeout: 2)
+
+        // Guard is cleared, so a brand-new transaction is allowed (not deferred).
+        AuthorizationCodePKCEFlow.activeSubjectLock.lock()
+        XCTAssertNil(AuthorizationCodePKCEFlow.activeSubject)
+        AuthorizationCodePKCEFlow.activeSubjectLock.unlock()
+    }
+
+    func testCancelWhenNothingInProgressIsNoOp() {
+        AuthorizationCodePKCEFlow.cancelActiveAuthentication()
+        AuthorizationCodePKCEFlow.activeSubjectLock.lock()
+        XCTAssertNil(AuthorizationCodePKCEFlow.activeSubject)
+        AuthorizationCodePKCEFlow.activeSubjectLock.unlock()
+    }
+
     func testTokenExchangeIncludesCodeVerifierInRequestBody() {
         let session = URLSession.testSession()
         let flow = AuthorizationCodePKCEFlow(session: session, verifierGenerator: { "verifier-value" })

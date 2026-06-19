@@ -105,6 +105,17 @@ open class Salesforce {
         return makeRequest(requestConvertible: requestConvertible, config: config)
     }
     
+    /// Stops any in-progress user authentication and clears the in-progress guard.
+    ///
+    /// Use this when the user changes the login host mid-authentication (e.g. picks
+    /// a different My Domain): cancel, then authenticate again with a `Salesforce`
+    /// configured for the new `oAuthHostname`. PKCE binds the `code_challenge` to a
+    /// single host's authorize request, so a fresh transaction is required — reusing
+    /// the in-flight one across hosts yields `invalid_grant` ("invalid code verifier").
+    public func cancelAuthentication() {
+        oAuthManager.cancelAuthentication()
+    }
+
     public func logOut() -> AnyPublisher<Void, Error> {
         guard let cred = self.credential else {
             return Empty().eraseToAnyPublisher()

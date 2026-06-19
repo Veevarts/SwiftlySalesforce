@@ -18,6 +18,10 @@ public final class AuthorizationCodePKCEFlow {
     /// calls can't both pass the de-duplication guard and open competing flows.
     static internal let activeSubjectLock = NSLock()
     static internal var activeSubject: (subject: PassthroughSubject<Credential, Error>, consumerKey: String)?
+    /// The flow that owns the in-progress authentication, so it can be torn down
+    /// by `cancelActiveAuthentication()`. Weak: if the owner is released the
+    /// browser session is gone with it, and clearing the guard alone suffices.
+    private static weak var activeFlow: AuthorizationCodePKCEFlow?
 
     private let session: URLSession
     private let verifierGenerator: () throws -> String
@@ -30,9 +34,41 @@ public final class AuthorizationCodePKCEFlow {
         self.verifierGenerator = verifierGenerator
     }
 
+    /// Stops any in-progress authorization, dismisses its browser session and
+    /// clears the shared in-progress guard so the next `authenticate()` begins a
+    /// brand-new PKCE transaction (fresh verifier and code_challenge).
+    ///
+    /// Call this before switching hosts — e.g. when the user changes their My
+    /// Domain mid-login. PKCE binds the `code_challenge` to the authorize request
+    /// of a single host; reusing the in-flight transaction against a new host
+    /// makes Salesforce reject the exchange with `invalid_grant` ("invalid code
+    /// verifier"). After cancelling, recreate the flow/`OAuthManager` with the new
+    /// hostname and authenticate again.
+    ///
+    /// The in-flight authentication publisher completes with
+    /// `AuthorizationCodePKCEFlowError.authenticationCancelled`. Safe to call when
+    /// nothing is in progress.
+    public static func cancelActiveAuthentication() {
+        activeSubjectLock.lock()
+        let subject = activeSubject?.subject
+        let flow = activeFlow
+        activeSubject = nil
+        activeFlow = nil
+        activeSubjectLock.unlock()
+
+        DispatchQueue.main.async {
+            flow?.authenticationSession?.cancel()
+            flow?.authenticationSession = nil
+            flow?.presentationContextProvider = nil
+        }
+
+        subject?.send(completion: .failure(AuthorizationCodePKCEFlowError.authenticationCancelled))
+    }
+
     private static func clearActiveSubject() {
         activeSubjectLock.lock()
         activeSubject = nil
+        activeFlow = nil
         activeSubjectLock.unlock()
     }
 }
@@ -51,6 +87,7 @@ extension AuthorizationCodePKCEFlow: Authenticator {
 
         let subject = PassthroughSubject<Credential, Error>()
         AuthorizationCodePKCEFlow.activeSubject = (subject, connectedApp.consumerKey)
+        AuthorizationCodePKCEFlow.activeFlow = self
         AuthorizationCodePKCEFlow.activeSubjectLock.unlock()
 
         let authURL: URL
@@ -113,6 +150,13 @@ extension AuthorizationCodePKCEFlow: Authenticator {
 
         self.authenticationSession = session
         return subject.eraseToAnyPublisher()
+    }
+
+    /// Stops the in-progress authorization. Forwards to
+    /// `cancelActiveAuthentication()`; the guard is process-wide, so this tears
+    /// down whichever flow is active regardless of which instance receives it.
+    public func cancel() {
+        AuthorizationCodePKCEFlow.cancelActiveAuthentication()
     }
 }
 
@@ -213,6 +257,7 @@ public enum AuthorizationCodePKCEFlowError: LocalizedError {
     case missingCodeVerifier
     case sessionFailure
     case authenticationInProgress
+    case authenticationCancelled
     case randomGenerationFailed
 }
 
