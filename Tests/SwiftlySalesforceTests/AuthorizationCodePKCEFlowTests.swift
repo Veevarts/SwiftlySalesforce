@@ -38,7 +38,7 @@ final class AuthorizationCodePKCEFlowTests: XCTestCase {
     func testAuthorizeURLIncludesAuthorizationCodePKCEParameters() throws {
         let flow = AuthorizationCodePKCEFlow(verifierGenerator: { "verifier-value" })
 
-        let url = try flow.authorizationURL(connectedApp: Util.connectedApp, hostname: "login.salesforce.com")
+        let (url, _) = try flow.authorizationURL(connectedApp: Util.connectedApp, hostname: "login.salesforce.com")
         let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
 
         XCTAssertEqual(url.scheme, "https")
@@ -51,16 +51,40 @@ final class AuthorizationCodePKCEFlowTests: XCTestCase {
         XCTAssertEqual(query.first(named: "code_challenge")?.value, AuthorizationCodePKCEFlow.codeChallenge(for: "verifier-value"))
     }
 
-    func testCallbackWithoutCodeFailsAndClearsVerifier() throws {
+    func testCallbackWithoutCodeFails() throws {
         let flow = AuthorizationCodePKCEFlow(verifierGenerator: { "verifier-value" })
-        _ = try flow.authorizationURL(connectedApp: Util.connectedApp, hostname: "login.salesforce.com")
 
         XCTAssertThrowsError(try flow.authorizationCode(from: Util.connectedApp.callbackURL)) { error in
             guard case AuthorizationCodePKCEFlowError.missingAuthorizationCode = error else {
                 return XCTFail("Expected missingAuthorizationCode, got \(error)")
             }
         }
-        XCTAssertNil(flow.currentVerifierForTesting)
+    }
+
+    /// Regression for the intermittent `invalid_grant`: two overlapping authorize
+    /// attempts must each keep the verifier that matches the challenge they opened.
+    /// Before the fix, the verifier lived in shared mutable state, so the second
+    /// authorization clobbered the first's verifier and the exchange sent a verifier
+    /// that no longer matched the issued code_challenge.
+    func testOverlappingAuthorizationsKeepVerifierBoundToOwnChallenge() throws {
+        var counter = 0
+        let flow = AuthorizationCodePKCEFlow(verifierGenerator: {
+            counter += 1
+            return "verifier-\(counter)"
+        })
+
+        let (url1, verifier1) = try flow.authorizationURL(connectedApp: Util.connectedApp, hostname: "login.salesforce.com")
+        // A second authorization starts before the first completes.
+        let (url2, verifier2) = try flow.authorizationURL(connectedApp: Util.connectedApp, hostname: "login.salesforce.com")
+
+        XCTAssertNotEqual(verifier1, verifier2)
+
+        let challenge1 = URLComponents(url: url1, resolvingAgainstBaseURL: false)?.queryItems?.first(named: "code_challenge")?.value
+        let challenge2 = URLComponents(url: url2, resolvingAgainstBaseURL: false)?.queryItems?.first(named: "code_challenge")?.value
+
+        // Each returned verifier still matches the challenge that opened its own URL.
+        XCTAssertEqual(challenge1, AuthorizationCodePKCEFlow.codeChallenge(for: verifier1))
+        XCTAssertEqual(challenge2, AuthorizationCodePKCEFlow.codeChallenge(for: verifier2))
     }
 
     func testTokenExchangeIncludesCodeVerifierInRequestBody() {
