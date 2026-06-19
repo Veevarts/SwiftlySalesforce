@@ -2,6 +2,9 @@
 
 > Releases 8.2.x are from the [Veevarts fork](https://github.com/Veevarts/SwiftlySalesforce).
 
+## Version 8.2.4 (Jun. 19, 2026)
+- Added the ability to cancel an in-progress authentication so login can restart cleanly after a host change. When the user switched their My Domain mid-login, the in-flight PKCE transaction (bound to the original host) was reused against the new host and Salesforce rejected the token exchange with `invalid_grant` ("invalid code verifier"). New `Salesforce.cancelAuthentication()` (and `OAuthManager.cancelAuthentication()` / `AuthorizationCodePKCEFlow.cancelActiveAuthentication()`) stops the in-flight flow so the next `authenticate()` begins a fresh PKCE transaction against the new host. `Authenticator` gains a `cancel()` requirement with a default no-op (non-breaking).
+
 ## Version 8.2.3 (Jun. 19, 2026)
 - Fixed an intermittent `400 invalid_grant` during PKCE login. The `code_verifier` was held in shared mutable state, so two overlapping authorization attempts could overwrite each other's verifier and send one that no longer matched the issued `code_challenge`. The verifier is now bound to its session, and access to the active-authentication state is serialized with a lock.
 
