@@ -14,6 +14,9 @@ import UIKit
 
 /// Salesforce OAuth authorization-code flow with PKCE S256 support.
 public final class AuthorizationCodePKCEFlow {
+    /// Serializes check-and-set of `activeSubject` so two concurrent `publisher`
+    /// calls can't both pass the de-duplication guard and open competing flows.
+    static internal let activeSubjectLock = NSLock()
     static internal var activeSubject: (subject: PassthroughSubject<Credential, Error>, consumerKey: String)?
 
     private let session: URLSession
@@ -21,21 +24,26 @@ public final class AuthorizationCodePKCEFlow {
     private var authenticationSession: ASWebAuthenticationSession?
     private var presentationContextProvider: ASWebAuthenticationPresentationContextProviding?
     private var subscriptions = Set<AnyCancellable>()
-    private var currentVerifier: String?
-
-    internal var currentVerifierForTesting: String? { currentVerifier }
 
     public init(session: URLSession = .shared, verifierGenerator: @escaping () throws -> String = AuthorizationCodePKCEFlow.generateCodeVerifier) {
         self.session = session
         self.verifierGenerator = verifierGenerator
     }
+
+    private static func clearActiveSubject() {
+        activeSubjectLock.lock()
+        activeSubject = nil
+        activeSubjectLock.unlock()
+    }
 }
 
 extension AuthorizationCodePKCEFlow: Authenticator {
     public func publisher(connectedApp: ConnectedApp, hostname: String) -> AnyPublisher<Credential, Error> {
-        if let subj = AuthorizationCodePKCEFlow.activeSubject {
-            if subj.consumerKey == connectedApp.consumerKey {
-                return subj.subject.eraseToAnyPublisher()
+        AuthorizationCodePKCEFlow.activeSubjectLock.lock()
+        if let existing = AuthorizationCodePKCEFlow.activeSubject {
+            AuthorizationCodePKCEFlow.activeSubjectLock.unlock()
+            if existing.consumerKey == connectedApp.consumerKey {
+                return existing.subject.eraseToAnyPublisher()
             } else {
                 return Fail(error: AuthorizationCodePKCEFlowError.authenticationInProgress).eraseToAnyPublisher()
             }
@@ -43,22 +51,27 @@ extension AuthorizationCodePKCEFlow: Authenticator {
 
         let subject = PassthroughSubject<Credential, Error>()
         AuthorizationCodePKCEFlow.activeSubject = (subject, connectedApp.consumerKey)
+        AuthorizationCodePKCEFlow.activeSubjectLock.unlock()
 
         let authURL: URL
+        let verifier: String
         do {
-            authURL = try authorizationURL(connectedApp: connectedApp, hostname: hostname)
+            (authURL, verifier) = try authorizationURL(connectedApp: connectedApp, hostname: hostname)
         } catch {
-            AuthorizationCodePKCEFlow.activeSubject = nil
+            AuthorizationCodePKCEFlow.clearActiveSubject()
             return Fail(error: error).eraseToAnyPublisher()
         }
 
+        // `verifier` is captured by this completion closure, binding it to the
+        // session opened with its matching challenge. Even if another flow starts
+        // concurrently, the verifier sent at exchange is always the one whose
+        // code_challenge opened *this* browser — no shared mutable state to clobber.
         let session = ASWebAuthenticationSession(url: authURL, callbackURLScheme: connectedApp.callbackURL.scheme) { [weak self] url, error in
             guard let self = self else { return }
             defer {
-                self.currentVerifier = nil
                 self.authenticationSession = nil
                 self.presentationContextProvider = nil
-                AuthorizationCodePKCEFlow.activeSubject = nil
+                AuthorizationCodePKCEFlow.clearActiveSubject()
             }
 
             if let error = error {
@@ -67,9 +80,6 @@ extension AuthorizationCodePKCEFlow: Authenticator {
             }
 
             do {
-                guard let verifier = self.currentVerifier else {
-                    throw AuthorizationCodePKCEFlowError.missingCodeVerifier
-                }
                 guard let url = url else {
                     throw AuthorizationCodePKCEFlowError.missingAuthorizationCode
                 }
@@ -95,10 +105,9 @@ extension AuthorizationCodePKCEFlow: Authenticator {
             session.presentationContextProvider = contextProvider
             if !session.start() {
                 subject.send(completion: .failure(AuthorizationCodePKCEFlowError.sessionFailure))
-                self.currentVerifier = nil
                 self.authenticationSession = nil
                 self.presentationContextProvider = nil
-                AuthorizationCodePKCEFlow.activeSubject = nil
+                AuthorizationCodePKCEFlow.clearActiveSubject()
             }
         }
 
@@ -128,9 +137,8 @@ public extension AuthorizationCodePKCEFlow {
 }
 
 internal extension AuthorizationCodePKCEFlow {
-    func authorizationURL(connectedApp: ConnectedApp, hostname: String) throws -> URL {
+    func authorizationURL(connectedApp: ConnectedApp, hostname: String) throws -> (url: URL, verifier: String) {
         let verifier = try verifierGenerator()
-        currentVerifier = verifier
 
         let parameters = [
             "response_type": "code",
@@ -145,14 +153,12 @@ internal extension AuthorizationCodePKCEFlow {
         var comps = URLComponents(string: "https://\(hostname)/services/oauth2/authorize")
         comps?.queryItems = parameters.map { URLQueryItem(name: $0.key, value: $0.value) }
         guard let url = comps?.url else {
-            currentVerifier = nil
             throw AuthorizationCodePKCEFlowError.invalidEndpointURL
         }
-        return url
+        return (url, verifier)
     }
 
     func authorizationCode(from callbackURL: URL) throws -> String {
-        defer { currentVerifier = nil }
         guard let code = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?
             .queryItems?
             .first(where: { $0.name == "code" })?
