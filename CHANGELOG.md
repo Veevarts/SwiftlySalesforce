@@ -1,5 +1,16 @@
 # Change Log
 
+## Version 11.0.0 (unreleased)
+Major 'breaking' release. Hardens OAuth against modern Connected App settings and refresh-token rotation.
+* **Login now uses the authorization-code flow with PKCE (S256)** instead of the OAuth 2.0 user-agent
+  (implicit) flow. This works with Connected Apps that require PKCE or have the implicit flow disabled.
+  * **Breaking:** removes the public `URL.userAgentFlow(...)` and the internal user-agent login path.
+* **Refresh is now safe under refresh-token rotation (RTR).** A staggered request that holds an
+  already-rotated (single-use) refresh token now reuses the current credential instead of refreshing a
+  dead token (which Salesforce rejects with `invalid_grant`). Concurrent requests still trigger at most
+  one refresh. The interactive-login fallback only happens on a genuine `invalid_grant`.
+* **`403 Bad_OAuth_Token`** responses now trigger a token refresh and retry, matching the official Mobile SDK.
+
 ## Version 10.0.1 (March 29, 2022)
 Minor update. 
 * Added inline code documentation.

@@ -53,14 +53,14 @@ extension DefaultAuthorizer: Authorizer {
     private func produceCredential(refreshing: Credential?) async throws -> Credential {
         let host = refreshing?.siteURL?.host ?? refreshing?.instanceURL.host ?? defaultHost
         guard let credential = refreshing, let refreshToken = credential.refreshToken else {
-            return try await OAuthFlow.userAgent(consumerKey: consumerKey, host: host, callbackURL: callbackURL)
+            return try await OAuthFlow.authorizationCode(consumerKey: consumerKey, host: host, callbackURL: callbackURL, session: session)
         }
         do {
             return try await OAuthFlow.refreshToken(consumerKey: consumerKey, host: host, refreshToken: refreshToken, session: session)
         }
         catch let error as OAuthError where error.code == "invalid_grant" {
             // The refresh token is genuinely dead — only now fall back to interactive login.
-            return try await OAuthFlow.userAgent(consumerKey: consumerKey, host: host, callbackURL: callbackURL)
+            return try await OAuthFlow.authorizationCode(consumerKey: consumerKey, host: host, callbackURL: callbackURL, session: session)
         }
     }
     
