@@ -22,7 +22,21 @@ public extension ResponseValidator {
             throw URLError(.userAuthenticationRequired)
         }
     }
-    
+
+    func checkAuthenticationRequired(response: Response<Body>) throws where Body == Data {
+        // A 401 always means the access token is no longer accepted.
+        if response.metadata.statusCode == 401 {
+            throw URLError(.userAuthenticationRequired)
+        }
+        // Salesforce's `/services/oauth2/*` and some REST resources answer with HTTP 403 and a plain
+        // `Bad_OAuth_Token` body when the token is invalid. Treat that as authentication-required so the
+        // request is refreshed and retried, matching the official Mobile SDK. Other 403s are real errors.
+        if response.metadata.statusCode == 403,
+           String(data: response.body)?.trimmingCharacters(in: .whitespacesAndNewlines) == "Bad_OAuth_Token" {
+            throw URLError(.userAuthenticationRequired)
+        }
+    }
+
     func checkError(response: Response<Body>) throws {
         guard (200..<300).contains(response.metadata.statusCode) else {
             throw ResponseError(metadata: response.metadata)
