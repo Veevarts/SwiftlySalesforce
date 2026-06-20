@@ -32,10 +32,12 @@ extension DefaultAuthorizer: Authorizer {
         if let task = authenticatingTask {
             return try await task.value
         }
-        // (2) Reuse-if-rotated: the in-memory credential is already newer than the one the caller used
-        // (another request rotated the single-use refresh token). Reuse it instead of refreshing a
-        // superseded token, which Salesforce would reject with `invalid_grant`.
-        if let used = refreshing, let current = currentCredential, current.timestamp > used.timestamp {
+        // (2) Reuse-if-rotated: the in-memory credential is a *different*, equally-or-more-recent
+        // credential than the one the caller used — i.e. another request already rotated the single-use
+        // refresh token. Reuse it instead of refreshing a superseded token, which Salesforce would reject
+        // with `invalid_grant`. Using `!=` together with `>=` also covers the case where the rotated
+        // credential carries the same server `issued_at` (timestamp) as the one the straggler holds.
+        if let used = refreshing, let current = currentCredential, current != used, current.timestamp >= used.timestamp {
             return current
         }
         // (3) Perform exactly one authentication/refresh, serialized via `authenticatingTask`.

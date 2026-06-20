@@ -75,6 +75,30 @@ final class DefaultAuthorizerConcurrencyTests: XCTestCase {
         XCTAssertEqual(counter.count, 1, "A staggered straggler must not refresh an already-rotated token")
         XCTAssertEqual(second.refreshToken, "RT1")
     }
+
+    func testThatStaggeredRequestWithEqualTimestampStillReuses() async throws {
+        // Given
+        let counter = CallCounter()
+        let authorizer = DefaultAuthorizer(consumerKey: "CK", callbackURL: callbackURL, session: countingRefreshSession(counter))
+
+        // When: a first refresh establishes the rotated credential (RT1) at timestamp T ...
+        _ = try await authorizer.grantCredential(refreshing: staleCredential)
+        XCTAssertEqual(counter.count, 1)
+
+        // ... and a staggered straggler arrives holding RT0 with a timestamp EQUAL to T (same server `issued_at`).
+        let sameTimestampStraggler = Credential(
+            accessToken: "AT0b",
+            instanceURL: URL(string: "https://yourInstance.salesforce.com")!,
+            identityURL: URL(string: "https://login.salesforce.com/id/00Dx0000000BV7z/005x00000012Q9P")!,
+            timestamp: Date(timeIntervalSince1970: 1278448101416 / 1_000),
+            refreshToken: "RT0"
+        )
+        let second = try await authorizer.grantCredential(refreshing: sameTimestampStraggler)
+
+        // Then: still no second refresh — an equal-timestamp but different (rotated) credential is reused.
+        XCTAssertEqual(counter.count, 1, "Equal-timestamp straggler must reuse the rotated credential, not refresh a dead token")
+        XCTAssertEqual(second.refreshToken, "RT1")
+    }
 }
 
 /// Thread-safe call counter shared with a synchronous `MockURLProtocol` loading handler.
