@@ -95,6 +95,49 @@ let accountMetadata = try await salesforce.describe("Account")
 ## User Authorization
 Swiftly Salesforce will automatically manage all required Salesforce [authorization flows](https://help.salesforce.com/articleView?id=sf.remoteaccess_oauth_flows.htm&type=5). If Swiftly Salesforce already has a valid access token in its secure  store, it will include that token in the header of every API request. If the token has expired and Salesforce rejects the request, then Swiftly Salesforce will attempt to refresh the access token without bothering the user to re-enter the username and password. If Swiftly Salesforce doesn't have a valid access token, or is unable to refresh it, then Swiftly Salesforce will direct the user to the Salesforce-hosted login form.
 
+### Login Mode and Security (RFC 8252 §8.12)
+
+> **IMPORTANT — PLEASE READ**: By default, Swiftly Salesforce presents the Salesforce login
+> page inside an embedded `WKWebView` (in-app browser).  This matches the behavior of the
+> Salesforce Mobile SDK for iOS and is convenient for most apps.  However, it has a known
+> security implication described in [RFC 8252 §8.12](https://www.rfc-editor.org/rfc/rfc8252#section-8.12):
+> the host application shares the same process as the embedded login page and **can, in
+> principle, observe web content, cookies, and credentials entered by the user** on the
+> Salesforce login form.
+>
+> If your app handles sensitive data, must comply with strict enterprise security policies, or
+> you simply want the strongest possible credential isolation, use `.systemBrowser` instead.
+> This uses Apple's `ASWebAuthenticationSession`, which runs in a **separate OS-managed process**
+> and does NOT give the host app access to web content or credentials.
+
+```swift
+// Default: embedded WKWebView (convenient, SDK-parity)
+let connection = try Salesforce.connect(consumerKey: key, callbackURL: url)
+
+// System browser: ASWebAuthenticationSession (RFC 8252 §8.12 compliant, stronger isolation)
+let connection = try Salesforce.connect(
+    consumerKey: key,
+    callbackURL: url,
+    loginMode: .systemBrowser
+)
+```
+
+**Multi-scene apps and custom anchors**: When using `loginMode: .embeddedWebView`, the library
+resolves the presentation window via a default heuristic (foreground-active `UIWindowScene` key
+window).  If your app has multiple scenes and needs a specific window, supply an explicit anchor:
+
+```swift
+let connection = try Salesforce.connect(
+    consumerKey: key,
+    callbackURL: url,
+    loginMode: .embeddedWebView(anchor: { mySpecificScene.keyWindow })
+)
+```
+
+**JSON configuration asymmetry**: If you configure `loginMode` in `Salesforce.json`, the embedded
+mode always uses the default-anchor heuristic — a JSON file cannot encode a custom closure.
+Multi-scene apps should configure the login mode programmatically.
+
 ## Sample App
 Check out [MySalesforceAccounts](https://github.com/mike4aday/MySalesforceAccounts) for a complete, working app that uses [SwiftUI](https://developer.apple.com/documentation/swiftui/), [Swift concurrency](https://developer.apple.com/news/?id=2o3euotz) and Swiftly Salesforce to display the user's Salesforce account records. Though it's a relatively-trival app, it illustrates how to configure an app and quickly connect it to Salesforce.
 

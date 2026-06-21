@@ -5,6 +5,7 @@ actor DefaultAuthorizer {
     let consumerKey: String
     let callbackURL: URL
     let defaultHost: String
+    let loginMode: LoginMode
     private let session: URLSession
 
     private var authenticatingTask: Task<Credential, Error>?
@@ -16,10 +17,11 @@ actor DefaultAuthorizer {
     /// single-use refresh token that has already been rotated out.
     private var currentCredential: Credential?
 
-    init(consumerKey: String, callbackURL: URL, session: URLSession? = nil, defaultHost: String? = nil) {
+    init(consumerKey: String, callbackURL: URL, session: URLSession? = nil, defaultHost: String? = nil, loginMode: LoginMode = .default) {
         self.consumerKey = consumerKey
         self.callbackURL = callbackURL
         self.defaultHost = defaultHost ?? "login.salesforce.com"
+        self.loginMode = loginMode
         self.session = session ?? URLSession(configuration: .ephemeral)
     }
 }
@@ -55,14 +57,16 @@ extension DefaultAuthorizer: Authorizer {
     private func produceCredential(refreshing: Credential?) async throws -> Credential {
         let host = refreshing?.siteURL?.host ?? refreshing?.instanceURL.host ?? defaultHost
         guard let credential = refreshing, let refreshToken = credential.refreshToken else {
-            return try await OAuthFlow.authorizationCode(consumerKey: consumerKey, host: host, callbackURL: callbackURL, session: session)
+            let userAgent = await loginMode.makeUserAgent()
+            return try await OAuthFlow.authorizationCode(consumerKey: consumerKey, host: host, callbackURL: callbackURL, userAgent: userAgent, session: session)
         }
         do {
             return try await OAuthFlow.refreshToken(consumerKey: consumerKey, host: host, refreshToken: refreshToken, session: session)
         }
         catch let error as OAuthError where error.code == "invalid_grant" {
             // The refresh token is genuinely dead — only now fall back to interactive login.
-            return try await OAuthFlow.authorizationCode(consumerKey: consumerKey, host: host, callbackURL: callbackURL, session: session)
+            let userAgent = await loginMode.makeUserAgent()
+            return try await OAuthFlow.authorizationCode(consumerKey: consumerKey, host: host, callbackURL: callbackURL, userAgent: userAgent, session: session)
         }
     }
     
