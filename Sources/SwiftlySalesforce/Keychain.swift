@@ -114,7 +114,16 @@ struct Keychain {
             kSecAttrAccount: account,
             kSecValueData: password,
             ] as NSDictionary, nil)
-        guard err == errSecSuccess else {
+        switch err {
+        case errSecSuccess:
+            return
+        case errSecDuplicateItem:
+            // SecItemCopyMatching in write(...) can report errSecItemNotFound even
+            // though the item exists (Simulator quirk / item surviving an app
+            // reinstall), routing us here. Fall back to update so the write stays
+            // idempotent instead of failing with errSecDuplicateItem (-25299).
+            try self.storeByUpdating(service: service, account: account, password: password)
+        default:
             throw KeychainError.writeFailure(status: err)
         }
     }

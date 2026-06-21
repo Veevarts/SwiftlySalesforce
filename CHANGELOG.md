@@ -2,6 +2,11 @@
 
 ## Version 11.0.0 (unreleased)
 Major 'breaking' release. Hardens OAuth against modern Connected App settings and refresh-token rotation.
+* **`11.0.0-3` — Keychain credential save is now idempotent.** Recovers from `errSecDuplicateItem`
+  (`-25299`) on `SecItemAdd` by falling back to an update. Fixes a spurious
+  `KeychainError.writeFailure` on the first API call after login when a credential item from a prior
+  install survives in the keychain (`SecItemCopyMatching` can report `errSecItemNotFound` even though
+  the item exists, e.g. on the Simulator).
 * **Login now uses the authorization-code flow with PKCE (S256)** instead of the OAuth 2.0 user-agent
   (implicit) flow. This works with Connected Apps that require PKCE or have the implicit flow disabled.
   * **Breaking:** removes the public `URL.userAgentFlow(...)` and the internal user-agent login path.
