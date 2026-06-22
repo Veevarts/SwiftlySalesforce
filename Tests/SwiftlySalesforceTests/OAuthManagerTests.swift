@@ -12,6 +12,23 @@ class OAuthManagerTests: XCTestCase {
     override func tearDown() {
     }
 
+    func testThatDefaultAuthenticatorIsAuthorizationCodeFlow() {
+        let connectedApp = ConnectedApp(consumerKey: "KEY", callbackURL: URL(string: "testapp://oauthdone")!)
+        let manager = OAuthManager(connectedApp: connectedApp, hostname: "login.salesforce.com")
+        XCTAssertTrue(manager.authenticator is AuthorizationCodeFlow)
+    }
+
+    func testThatImplicitFlowRemainsOptIn() {
+        let connectedApp = ConnectedApp(consumerKey: "KEY", callbackURL: URL(string: "testapp://oauthdone")!)
+        let manager = OAuthManager(
+            connectedApp: connectedApp,
+            hostname: "login.salesforce.com",
+            authenticator: UserAgentFlow(),
+            refresher: RefreshTokenFlow()
+        )
+        XCTAssertTrue(manager.authenticator is UserAgentFlow)
+    }
+
     func testThatItRevokesRefreshToken() {
         
         // Given
