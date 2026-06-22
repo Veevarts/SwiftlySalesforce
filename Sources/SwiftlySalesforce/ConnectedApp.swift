@@ -14,9 +14,11 @@ public struct ConnectedApp {
     
     let consumerKey: String
     let callbackURL: URL
-    
-    public init(consumerKey: String, callbackURL: URL) {
+    let clientSecret: String?
+
+    public init(consumerKey: String, callbackURL: URL, clientSecret: String? = nil) {
         self.consumerKey = consumerKey
         self.callbackURL = callbackURL
+        self.clientSecret = clientSecret
     }
 }

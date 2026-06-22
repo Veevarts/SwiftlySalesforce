@@ -56,6 +56,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
 In the example above, we created a `Salesforce` instance with the Connected App's consumer key and callback URL. `salesforce` is an implicitly-unwrapped, optional, global variable, but you could also inject a `Salesforce` instance into your root view controller, for example, instead of using a global variable.
 
+> **Authentication flow (since 8.2.1).** By default, Swiftly Salesforce uses the OAuth 2.0 **authorization-code flow with PKCE** (RFC 7636), which is the recommended, secure flow. If your connected app requires a client secret, pass it to `ConnectedApp(consumerKey:callbackURL:clientSecret:)`. The older User-Agent (implicit) flow is still available — opt in by constructing the `OAuthManager` with `UserAgentFlow()` as the authenticator. Refresh-token rotation is handled automatically: if Salesforce returns a new refresh token, it is persisted in place of the old one.
+
 ### Example: Retrieve Salesforce Records
 The following will retrieve all the fields for an account record:
 ```swift

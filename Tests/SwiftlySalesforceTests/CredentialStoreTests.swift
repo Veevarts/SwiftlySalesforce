@@ -32,6 +32,29 @@ class CredentialStoreTests: XCTestCase {
         XCTAssertEqual(cred.identityURL, retrievedCred?.identityURL)
     }
     
+    // Note: Keychain round-trips (testThatItStoresAndRetrieves / testThatItClears) require a test
+    // host app with a keychain entitlement; in a bare SPM test bundle they fail with
+    // errSecMissingEntitlement (-34018). This test verifies the serialization path that
+    // CredentialStore uses around the Keychain (encode -> decode), without the Keychain I/O,
+    // so it confirms a rotated refresh token survives persistence.
+    func testThatRotatedCredentialSerializesRotatedToken() throws {
+
+        // Given a credential rotated by a refresh response that returned a new refresh token
+        let original = try Credential(with: callbackURL)
+        let json = """
+        {"access_token":"NEW_ACCESS","refresh_token":"ROTATED_REFRESH","instance_url":"https://yourInstance.salesforce.com","id":"https://login.salesforce.com/id/00Dx0000000BV7z/005x00000012Q9P","issued_at":"1278448101416"}
+        """.data(using: .utf8)!
+        let rotated = try RefreshTokenFlow.refreshedCredential(from: json, credential: original)
+
+        // When it goes through the same JSON encode/decode CredentialStore performs around the Keychain
+        let data = try JSONEncoder().encode(rotated)
+        let decoded = try JSONDecoder().decode(Credential.self, from: data)
+
+        // Then the rotated refresh token (and new access token) survive
+        XCTAssertEqual(decoded.refreshToken, "ROTATED_REFRESH")
+        XCTAssertEqual(decoded.accessToken, "NEW_ACCESS")
+    }
+
     func testThatItClears() {
 
         // Given
