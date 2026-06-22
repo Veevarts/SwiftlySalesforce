@@ -2,8 +2,9 @@
 
 ## Version 8.2.1 (Jun. 21, 2026)
 - **OAuth flow:** the default authentication flow is now the authorization-code flow with PKCE (RFC 7636). The previous User-Agent (implicit) flow is deprecated by OAuth 2.1 but remains available by passing `UserAgentFlow()` explicitly to `OAuthManager`/`Salesforce`.
-- **Refresh token rotation (RTR):** a rotated `refresh_token` returned by the token endpoint is now persisted instead of re-saving the previous one. An `invalid_grant` on refresh surfaces as `RefreshTokenFlowError.refreshTokenRotatedOrExpired` so callers can trigger re-authentication.
+- **Refresh token rotation (RTR):** a rotated `refresh_token` returned by the token endpoint is now persisted instead of re-saving the previous one. An `invalid_grant` on refresh surfaces as `RefreshTokenFlowError.refreshTokenRotatedOrExpired` so callers can trigger re-authentication. Concurrent refreshes for the same credential are coalesced into a single token request, and a request still holding a just-rotated token replays that refresh's result instead of reusing the dead token — so rotation can't invalidate the token out from under a parallel or slightly-later refresh.
 - **`ConnectedApp`:** added an optional `clientSecret` (source-compatible — existing initializers are unchanged).
+- **Token-expiry detection:** besides `401`, a `403` from a `/services/oauth2` path with a `Bad_OAuth_Token` body now triggers a refresh-and-retry (matching the official SDK); other `403`s remain permanent authorization failures.
 - _Follow-up:_ `state`/CSRF hardening of the redirect is not yet implemented.
 
 ## Version 8.0.2 (Feb. 16, 2021)

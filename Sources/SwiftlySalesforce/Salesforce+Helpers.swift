@@ -21,6 +21,12 @@ extension Salesforce {
         case 401:
             throw SalesforceError.authenticationRequired
         case 403:
+            // OAuth endpoints answer an invalid token with 403 + "Bad_OAuth_Token" instead of 401;
+            // treat only that case as a refreshable auth failure (a generic 403 is permanent).
+            if response.url?.path.hasPrefix("/services/oauth2") == true,
+                String(data: data, encoding: .utf8) == "Bad_OAuth_Token" {
+                throw SalesforceError.authenticationRequired
+            }
             throw SalesforceError.unauthorized
         case let code:
             // Error - try to deseralize Salesforce-provided error information
