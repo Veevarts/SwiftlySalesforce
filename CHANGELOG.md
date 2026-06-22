@@ -1,5 +1,11 @@
 # Change Log
 
+## Version 8.2.1 (Jun. 21, 2026)
+- **OAuth flow:** the default authentication flow is now the authorization-code flow with PKCE (RFC 7636). The previous User-Agent (implicit) flow is deprecated by OAuth 2.1 but remains available by passing `UserAgentFlow()` explicitly to `OAuthManager`/`Salesforce`.
+- **Refresh token rotation (RTR):** a rotated `refresh_token` returned by the token endpoint is now persisted instead of re-saving the previous one. An `invalid_grant` on refresh surfaces as `RefreshTokenFlowError.refreshTokenRotatedOrExpired` so callers can trigger re-authentication.
+- **`ConnectedApp`:** added an optional `clientSecret` (source-compatible — existing initializers are unchanged).
+- _Follow-up:_ `state`/CSRF hardening of the redirect is not yet implemented.
+
 ## Version 8.0.2 (Feb. 16, 2021)
 - Updated default Salesforce API version to 49.0 (Summer '20).
 - Minor updates to README file.

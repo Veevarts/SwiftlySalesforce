@@ -44,20 +44,35 @@ extension RefreshTokenFlow: Refresher {
         // Publisher for request
         return URLSession.shared.dataTaskPublisher(for: req)
             .tryMap { (data, response) -> Data in
-                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                    // Try to decode error information from data
-                    if let err = try? JSONDecoder().decode(RefreshTokenFlowErrorResult.self, from: data)   {
-                        throw RefreshTokenFlowError.endpointFailure(code: err.error, description: err.error_description, response: response)
-                    }
-                    else {
-                        throw RefreshTokenFlowError.endpointFailure(code: "Unknown", description: nil, response: response)
-                    }
+                if let error = RefreshTokenFlow.endpointError(data: data, response: response) {
+                    throw error
                 }
                 return data
             }
-            .decode(type: RefreshTokenFlowResult.self, decoder: JSONDecoder())
-            .map { $0.refreshing(credential: credential) }
+            .tryMap { try RefreshTokenFlow.refreshedCredential(from: $0, credential: credential) }
             .eraseToAnyPublisher()
+    }
+}
+
+internal extension RefreshTokenFlow {
+
+    /// Decodes a token-endpoint response and applies refresh token rotation: the new `refresh_token`
+    /// is used when present, otherwise the previous one is retained.
+    static func refreshedCredential(from tokenResponse: Data, credential: Credential) throws -> Credential {
+        return try JSONDecoder().decode(RefreshTokenFlowResult.self, from: tokenResponse).refreshing(credential: credential)
+    }
+
+    /// Maps a token-endpoint response to an error, or `nil` for a successful (HTTP 200) response.
+    /// An `invalid_grant` error is surfaced as `refreshTokenRotatedOrExpired` so callers can re-authenticate.
+    static func endpointError(data: Data, response: URLResponse) -> Error? {
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let decoded = try? JSONDecoder().decode(RefreshTokenFlowErrorResult.self, from: data)
+            if decoded?.error == "invalid_grant" {
+                return RefreshTokenFlowError.refreshTokenRotatedOrExpired(description: decoded?.error_description, response: response)
+            }
+            return RefreshTokenFlowError.endpointFailure(code: decoded?.error ?? "Unknown", description: decoded?.error_description, response: response)
+        }
+        return nil
     }
 }
 
@@ -65,42 +80,48 @@ public enum RefreshTokenFlowError: LocalizedError {
     case invalidEndpointURL
     case invalidRequest(message: String?)
     case endpointFailure(code: String, description: String?, response: URLResponse)
+    /// The refresh token was rotated or expired (`invalid_grant`); re-authentication is required.
+    case refreshTokenRotatedOrExpired(description: String?, response: URLResponse)
 }
 
 fileprivate struct RefreshTokenFlowResult {
-    
+
     let accessToken: String
     let instanceURL: URL
     let identityURL: URL
+    let refreshToken: String?
     let issuedAt: UInt?
     let communityURL: URL?
     let communityID: String?
-    
+
     func refreshing(credential: Credential) -> Credential {
-        return Credential(accessToken: accessToken, instanceURL: instanceURL, identityURL: identityURL, refreshToken: credential.refreshToken, issuedAt: issuedAt, idToken: credential.idToken, communityURL: communityURL, communityID: communityID)
+        // Refresh token rotation: use the rotated token when the server returned one, otherwise keep the existing one.
+        return Credential(accessToken: accessToken, instanceURL: instanceURL, identityURL: identityURL, refreshToken: refreshToken ?? credential.refreshToken, issuedAt: issuedAt, idToken: credential.idToken, communityURL: communityURL, communityID: communityID)
     }
 }
 
 extension RefreshTokenFlowResult: Decodable {
-    
+
     enum CodingKeys: String, CodingKey {
         case accessToken = "access_token"
         case instanceURL = "instance_url"
         case identityURL = "id"
+        case refreshToken = "refresh_token"
         case issuedAt = "issued_at"
         case communityURL = "sfdc_community_url"
         case communityID = "sfdc_community_id"
     }
-    
+
     public init(from decoder: Decoder) throws {
-        
+
         // Top level container
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        
+
         // Set properties
         self.accessToken = try container.decode(String.self, forKey: .accessToken)
         self.instanceURL = try container.decode(URL.self, forKey: .instanceURL)
         self.identityURL = try container.decode(URL.self, forKey: .identityURL)
+        self.refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
         self.issuedAt = try {
             guard let s = try container.decodeIfPresent(String.self, forKey: .issuedAt) else {
                 return nil

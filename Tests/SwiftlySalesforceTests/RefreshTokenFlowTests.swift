@@ -12,6 +12,64 @@ class RefreshTokenFlowTests: XCTestCase {
     override func tearDown() {
     }
 
+    private func makeCredential(refreshToken: String?) -> Credential {
+        return Credential(
+            accessToken: "OLD_ACCESS",
+            instanceURL: URL(string: "https://example.my.salesforce.com")!,
+            identityURL: URL(string: "https://login.salesforce.com/id/00Dxx0000001gPL/005xx000001Sv6D")!,
+            refreshToken: refreshToken,
+            issuedAt: nil, idToken: nil, communityURL: nil, communityID: nil)
+    }
+
+    private let tokenURL = URL(string: "https://login.salesforce.com/services/oauth2/token")!
+
+    // MARK: - Group 5: Refresh Token Rotation
+
+    func testThatItUsesRotatedRefreshToken() throws {
+        let original = makeCredential(refreshToken: "OLD_REFRESH")
+        let json = """
+        {"access_token":"NEW_ACCESS","refresh_token":"NEW_REFRESH","instance_url":"https://example.my.salesforce.com","id":"https://login.salesforce.com/id/00Dxx0000001gPL/005xx000001Sv6D","issued_at":"1600000000"}
+        """.data(using: .utf8)!
+        let refreshed = try RefreshTokenFlow.refreshedCredential(from: json, credential: original)
+        XCTAssertEqual(refreshed.accessToken, "NEW_ACCESS")
+        XCTAssertEqual(refreshed.refreshToken, "NEW_REFRESH")
+    }
+
+    func testThatItKeepsOldRefreshTokenWhenNoneReturned() throws {
+        let original = makeCredential(refreshToken: "OLD_REFRESH")
+        let json = """
+        {"access_token":"NEW_ACCESS","instance_url":"https://example.my.salesforce.com","id":"https://login.salesforce.com/id/00Dxx0000001gPL/005xx000001Sv6D","issued_at":"1600000000"}
+        """.data(using: .utf8)!
+        let refreshed = try RefreshTokenFlow.refreshedCredential(from: json, credential: original)
+        XCTAssertEqual(refreshed.accessToken, "NEW_ACCESS")
+        XCTAssertEqual(refreshed.refreshToken, "OLD_REFRESH")
+    }
+
+    // MARK: - Group 6: Typed RTR error
+
+    func testThatInvalidGrantMapsToRotatedOrExpired() throws {
+        let response = HTTPURLResponse(url: tokenURL, statusCode: 400, httpVersion: nil, headerFields: nil)!
+        let data = #"{"error":"invalid_grant","error_description":"expired access/refresh token"}"#.data(using: .utf8)!
+        let error = try XCTUnwrap(RefreshTokenFlow.endpointError(data: data, response: response))
+        guard case RefreshTokenFlowError.refreshTokenRotatedOrExpired = error else {
+            return XCTFail("Expected refreshTokenRotatedOrExpired, got \(error)")
+        }
+    }
+
+    func testThatOtherErrorsMapToEndpointFailure() throws {
+        let response = HTTPURLResponse(url: tokenURL, statusCode: 500, httpVersion: nil, headerFields: nil)!
+        let data = #"{"error":"server_error"}"#.data(using: .utf8)!
+        let error = try XCTUnwrap(RefreshTokenFlow.endpointError(data: data, response: response))
+        guard case RefreshTokenFlowError.endpointFailure = error else {
+            return XCTFail("Expected endpointFailure, got \(error)")
+        }
+    }
+
+    func testThatSuccessfulResponseHasNoEndpointError() {
+        let response = HTTPURLResponse(url: tokenURL, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        XCTAssertNil(RefreshTokenFlow.endpointError(data: Data(), response: response))
+    }
+
     // Assumption: server grants refresh token
     func testThatItRefreshes() {
         
